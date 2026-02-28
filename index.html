@@ -1,0 +1,929 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>AI Paghetta</title>
+<meta name="description" content="Assistente spese personali con AI">
+<meta name="theme-color" content="#0a1410">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="AI Paghetta">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💰</text></svg>">
+<link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💰</text></svg>">
+<link rel="manifest" href="manifest.json">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap');
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+@keyframes fadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body,#root{height:100%;width:100%;overflow:hidden}
+body{background:#0a1410;font-family:'DM Sans',sans-serif}
+input::placeholder{color:#4a6a5a}
+textarea::placeholder{color:#4a6a5a}
+::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:#1a3528;border-radius:4px}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback } = React;
+
+/* ─── localStorage helpers (replaces window.storage) ─── */
+const LS = {
+  get: (key) => { try { return localStorage.getItem(key); } catch { return null; } },
+  set: (key, val) => { try { localStorage.setItem(key, val); } catch {} },
+  del: (key) => { try { localStorage.removeItem(key); } catch {} }
+};
+
+/* ─── CATEGORIES ─── */
+const CATEGORIES = {
+  cibo_basic: { label: "Cibo e Varie BASIC", icon: "🛒", color: "#4ECDC4", subs: ["Spesa Alimentare + Casa", "Tigotà", "Altro cibo basic"] },
+  cibo_extra: { label: "Cibo e Varie EXTRA", icon: "🍕", color: "#FF6B6B", subs: ["Colazione fuori", "Pranzo Fuori", "Cena Fuori", "Pizza fuori", "Pizza asporto", "Gelato", "Post Cena Fuori"] },
+  cibo_extra_ste: { label: "Cibo EXTRA (Solo Ste)", icon: "🍕", color: "#E55A5A", alwaysPersonal: true, subs: ["Colazione fuori", "Pranzo Fuori", "Cena Fuori", "Pizza fuori", "Pizza asporto", "Gelato", "Post Cena Fuori"] },
+  auto: { label: "AUTO", icon: "🚗", color: "#96CEB4", subs: ["Benzina", "Assicurazione", "Bollo", "Lavaggio Auto", "Trasporti", "Noleggio Telepass"] },
+  moto: { label: "MOTO", icon: "🏍️", color: "#88B7A0", subs: ["Benzina", "Bollo", "Assicurazione", "Revisione"] },
+  casa_utenze: { label: "CASA UTENZE", icon: "🏠", color: "#45B7D1", subs: ["Elettricità casa", "Internet casa", "Google drive casetta", "Spese ordinarie condominio", "Spese straordinarie condominio", "Assicurazione Casa e RC", "TARI 1° Rata casa", "TARI 2° Rata casa", "Bancomat Annuale"] },
+  box: { label: "BOX", icon: "📦", color: "#7FB3C8", subs: ["Spese Condominio Box", "Elettricità Box", "TARI 1° Rata BOX", "TARI 2° Rata BOX", "IMU 1° Rata BOX", "IMU 2° Rata BOX"] },
+  abbonamenti: { label: "ABBONAMENTI", icon: "📺", color: "#A78BFA", subs: ["Netflix", "Disney +", "Amazon Prime", "Altro abbonamento"] },
+  per_casa: { label: "PER CASA", icon: "🏡", color: "#60A5FA", subs: [] },
+  utenze_ste: { label: "UTENZE STE", icon: "📱", color: "#F59E0B", alwaysPersonal: true, subs: ["Fastweb Telefono", "Rinnovo PEC", "Google Drive", "Altro utenza"] },
+  charles: { label: "CHARLES PERCIVAL", icon: "🐕", color: "#D97706", subs: ["Cibo 12KG", "Altro cibo vario", "Vaccinazione", "Sacchetti cacca", "Expot Antizanzare", "Toelettatura"] },
+  self_care: { label: "SELF CARE", icon: "💊", color: "#DDA0DD", subs: ["Assicurazione Faschim", "Pillola Marti", "Pastiglia Ste", "Parrucchiere", "Farmacia varia", "Pulizia Denti", "Visita Medica"] },
+  cultura_sport: { label: "CULTURA/SPORT", icon: "📚", color: "#82E0AA", subs: ["4Books", "Registro Storico Cicli", "Libri", "Padel", "Calcetto", "Cinema"] },
+  abbigliamento: { label: "ABBIGLIAMENTO", icon: "👕", color: "#F7DC6F", subs: [] },
+  tecnologia: { label: "TECNOLOGIA", icon: "💻", color: "#85C1E9", subs: [] },
+  altro_shopping: { label: "ALTRO SHOPPING", icon: "🛍️", color: "#F1948A", subs: [] },
+  intrattenimento: { label: "INTRATTENIMENTO/USCITE", icon: "🎉", color: "#FFEAA7", subs: [] },
+  compleanni: { label: "COMPLEANNI/FAMIGLIA", icon: "🎁", color: "#F8A5C2", subs: ["S. Martina", "Comple Denise", "Festa Papà", "Festa Mamma", "Comple Papà", "Comple Mamma", "Comple Martina", "Natale Martina", "Natale Mamma", "Natale Papà", "Natale Denise"] },
+  extra_amici: { label: "EXTRA ATTIVITÀ (AMICI)", icon: "🍻", color: "#FDCB6E", subs: ["Birra amici"] },
+  matrimonio: { label: "MATRIMONIO", icon: "💍", color: "#E8DAEF", subs: [] },
+  lavori_casa: { label: "LAVORI CASA NUOVA", icon: "🔨", color: "#AEB6BF", subs: [] },
+  beneficenza: { label: "BENEFICENZA", icon: "❤️", color: "#F5B7B1", subs: [] },
+  multe: { label: "MULTE", icon: "⚠️", color: "#E74C3C", subs: [] },
+  lavoro: { label: "LAVORO", icon: "💼", color: "#5DADE2", alwaysPersonal: true, subs: ["Dominio", "Hosting", "Elementor WP", "Internet Kena", "Chat GPT", "Google Drive DS", "Adobe Mensile", "Illimity Bank", "Commercialista", "Fatture in Cloud", "Canva", "LinkedIn Helper", "Trasferta", "Altro lavoro"] }
+};
+
+const CATEGORY_LIST = Object.entries(CATEGORIES).map(([k, v]) => `- ${k}: ${v.label} (${v.icon})`).join("\n");
+
+/* ─── SYSTEM PROMPT ─── */
+const SYSTEM_PROMPT = `Sei AI Paghetta, assistente spese personali di Ste. Rispondi SOLO in JSON valido, niente altro testo.
+
+CONTESTO: Ste vive con Martina. Gestiscono le spese insieme con il metodo SMC (Spesa Media Coppia):
+- "condivisa": spesa della coppia. Ste paga, ma il costo reale è per entrambi.
+- "solo_ste": spesa esclusivamente di Ste.
+
+CATEGORIE:
+${CATEGORY_LIST}
+
+CATEGORIE SEMPRE PERSONALI (forza solo_ste, SEMPRE): cibo_extra_ste, utenze_ste, lavoro
+
+COME DEDURRE IL TIPO (usa il buon senso, non chiedere quasi mai):
+
+Condivisa per default:
+- Spesa supermercato/alimentari → condivisa (mangiano insieme)
+- Bollette, utenze casa, condominio → condivisa (casa condivisa)
+- Cibo/uscite insieme, pizza, cena, colazione in coppia → condivisa
+- Benzina auto → condivisa (auto condivisa)
+- Cane Charles → condivisa (cane della coppia)
+- Netflix → condivisa
+- Spese per casa (mobili, piante, decorazioni) → condivisa
+
+Solo_ste per default:
+- Vestiti/abbigliamento di Ste → solo_ste (a meno che dica "per Martina")
+- Tecnologia, accessori personali → solo_ste
+- Abbonamenti personali (Disney+, Prime) → solo_ste
+- Padel, calcetto, sport → solo_ste
+- Uscite con amici (birra, attività) → solo_ste
+- Libri, cultura → solo_ste (a meno che cinema insieme)
+
+Indizi nel testo (SEMPRE rispettare questi):
+- "con Martina", "con marti", "insieme", "per noi", "per casa", "smc" → SEMPRE condivisa
+- "da solo", "mio", "per me", "personale", "solo io", "ste" → SEMPRE solo_ste
+- "per Martina", "regalo" → condivisa (è per la coppia/famiglia)
+
+IMPORTANTE — "ste" nel messaggio:
+Se l'utente scrive "ste" (non come parte di altra parola), intende SEMPRE solo_ste.
+Esempio: "6 benzina moto ste" → amount=6, category=moto, sub="Benzina", tipo=solo_ste
+Esempio: "parrucchiere 17 ste" → tipo=solo_ste
+
+IMPORTANTE — MOTO vs AUTO:
+Se l'utente scrive "moto" → categoria MOTO, NON auto.
+"benzina moto" → moto, sub "Benzina"
+"bollo moto" → moto, sub "Bollo"
+"benzina" (senza moto) → auto, sub "Benzina"
+
+CHIEDI SOLO SE è davvero ambiguo — nella grande maggioranza dei casi, deduci dal contesto.
+
+REGOLE DI RISPOSTA:
+
+1. Spesa completa (tipo dedotto):
+{"type":"expense","data":{"description":"...","amount":NUMBER,"category":"CATEGORY_KEY","subcategory":"...o null","tipo":"condivisa|solo_ste","payment":"carta|contanti|bonifico"},"message":"...conferma breve in italiano","needsInfo":false}
+
+2. Solo se DAVVERO non riesci a capire il tipo (raro):
+{"type":"expense","data":{"description":"...","amount":NUMBER,"category":"...","subcategory":null,"tipo":null,"payment":"carta"},"message":"...domanda breve","needsInfo":true,"missingField":"tipo"}
+
+3. Se l'utente risponde a una domanda pendente ("condivisa", "solo mia", "con martina"):
+Completa con i dati pendenti.
+
+4. Per domande/query sulle spese:
+{"type":"query","message":"...risposta in italiano..."}
+
+5. SPESA RICORRENTE ANNUALE DIVISA SUI MESI:
+Se l'utente dice "ogni mese", "mensile", "annuale", "su tutti i mesi", "dividi sui mesi", "su ogni mese", "all'anno":
+{"type":"expense","data":{"description":"...","amount":NUMBER,"category":"...","subcategory":"...","tipo":"...","payment":"carta"},"recurring":true,"totalAmount":NUMERO_TOTALE_ANNUALE,"message":"...conferma breve","needsInfo":false}
+IMPORTANTE: "amount" deve essere il TOTALE ANNUALE (uguale a totalAmount). La divisione per mesi la fa l'app.
+Esempio: "220€ claude su ogni mese" → amount=220, totalAmount=220, recurring=true
+Esempio: "canva 110€ annuale" → amount=110, totalAmount=110, recurring=true
+Esempio: "52€ adobe mensile" → questa è una spesa SINGOLA del mese, NON ricorrente. Non mettere recurring=true.
+ATTENZIONE: "mensile" da solo (es. "52€ adobe mensile") = spesa di QUESTO mese. "su ogni mese" / "annuale" / "dividi" = ricorrente.
+
+PARSING IMPORTI:
+- "40 euro spesa" → amount=40 (importo Ste)
+- "pizza 35€" → amount=35
+- "12,50 pranzo" → amount=12.50
+- Mai negativi.
+
+IMPORTANTE — IMPORTO SMC vs STE:
+- Se l'utente scrive "smc", "totale coppia", "in due", "diviso" accanto all'importo → il numero è il TOTALE SMC. L'importo Ste = numero / 2.
+  Esempio: "84 benzina smc" → amount=42 (Ste paga metà), tipo=condivisa
+  Esempio: "60€ spesa smc" → amount=30, tipo=condivisa
+- Se NON c'è "smc"/"totale"/"diviso" → il numero è l'importo Ste diretto.
+  Esempio: "40 benzina" → amount=40, tipo=condivisa
+
+CATEGORIZZAZIONE RAPIDA — keyword dell'utente → category + subcategory:
+
+CIBO BASIC (cibo_basic, condivisa):
+- spesa, supermercato, esselunga, conad, lidl, aldi, coop, eurospin, alimentari, pam → sub: "Spesa Alimentare + Casa"
+- tigotà, acqua e sapone, detersivi → sub: "Tigotà"
+
+CIBO EXTRA (cibo_extra, condivisa):
+- colazione, cappuccino, brioche, bar (se con Martina) → sub: "Colazione fuori"
+- pranzo fuori, ristorante pranzo (se con Martina) → sub: "Pranzo Fuori"
+- cena fuori, ristorante, cena (se con Martina) → sub: "Cena Fuori"
+- pizza fuori, pizzeria → sub: "Pizza fuori"
+- pizza asporto, pizza a casa, pizza domicilio → sub: "Pizza asporto"
+- gelato, gelateria → sub: "Gelato"
+- dopo cena, drink, cocktail, aperitivo (se con Martina) → sub: "Post Cena Fuori"
+
+CIBO EXTRA SOLO STE (cibo_extra_ste, sempre solo_ste):
+- stesse keyword di cibo_extra MA con "da solo", "io", "per me", "al lavoro", "coi colleghi"
+- pranzo lavoro, pausa pranzo → sub: "Pranzo Fuori"
+- colazione da solo → sub: "Colazione fuori"
+- aperitivo/birra con amici → meglio extra_amici
+
+AUTO (auto, condivisa):
+- benzina, pieno, distributore, rifornimento → sub: "Benzina"
+- assicurazione auto → sub: "Assicurazione"
+- bollo auto → sub: "Bollo"
+- lavaggio, autolavaggio → sub: "Lavaggio Auto"
+- treno, metro, bus, tram, biglietto, abbonamento trasporti → sub: "Trasporti"
+- telepass → sub: "Noleggio Telepass"
+- parcheggio → sub: "Parcheggio"
+
+MOTO (moto, condivisa):
+- benzina moto → sub: "Benzina"
+- bollo moto → sub: "Bollo"
+- assicurazione moto → sub: "Assicurazione"
+
+CASA UTENZE (casa_utenze, condivisa):
+- bolletta luce, enel, elettricità → sub: "Elettricità casa"
+- internet, fibra, fastweb casa → sub: "Internet casa"
+- google drive casetta → sub: "Google drive casetta"
+- condominio → sub: "Spese ordinarie condominio"
+- tari → sub: "TARI 1° Rata casa"
+
+BOX (box, condivisa):
+- condominio box → sub: "Spese Condominio Box"
+- imu box → sub: "IMU 1° Rata BOX"
+
+ABBONAMENTI (abbonamenti):
+- netflix → sub: "Netflix", condivisa
+- disney, disney+ → sub: "Disney +", solo_ste
+- amazon prime, prime → sub: "Amazon Prime", solo_ste
+
+PER CASA (per_casa, condivisa):
+- fiori, piante, decorazione, arredamento, ikea → nessun sub fisso, usa descrizione
+
+UTENZE STE (utenze_ste, sempre solo_ste):
+- fastweb, telefono, cellulare → sub: "Fastweb Telefono"
+- pec → sub: "Rinnovo PEC"
+- google drive personale → sub: "Google Drive"
+
+CHARLES (charles, condivisa):
+- crocchette, cibo cane, royal canin → sub: "Cibo 12KG"
+- snack cane, biscotti cane → sub: "Altro cibo vario"
+- vaccino cane, veterinario → sub: "Vaccinazione"
+- sacchetti, sacchettini → sub: "Sacchetti cacca"
+- toelettatura, toilettatura, bagno cane → sub: "Toelettatura"
+
+SELF CARE (self_care):
+- faschim, assicurazione sanitaria → sub: "Assicurazione Faschim", solo_ste
+- pillola, contraccettivo → sub: "Pillola Marti", condivisa
+- pastiglia, medicinale ste → sub: "Pastiglia Ste", condivisa
+- parrucchiere, barbiere, capelli → sub: "Parrucchiere" (chiedi se ambiguo)
+- farmacia, medicina, tachipirina → sub: "Farmacia varia"
+- dentista, pulizia denti → sub: "Pulizia Denti"
+- dottore, visita, medico → sub: "Visita Medica"
+- scovolini → sub: "scovolini denti"
+
+CULTURA/SPORT (cultura_sport):
+- padel → sub: "Padel", solo_ste
+- calcetto → sub: "Calcetto", solo_ste
+- cinema → sub: "Cinema" (condivisa se insieme)
+- libro → sub: "Libri"
+
+ABBIGLIAMENTO (abbigliamento, solo_ste): pantaloni, camicia, giacca, scarpe, vestito, maglietta
+TECNOLOGIA (tecnologia, solo_ste): telefono nuovo, cuffie, monitor, accessori tech
+ALTRO SHOPPING (altro_shopping): regali generici, oggetti vari
+INTRATTENIMENTO/USCITE (intrattenimento): concerti, eventi, feste, escape room
+COMPLEANNI (compleanni): regalo compleanno, natale + nome persona
+EXTRA AMICI (extra_amici, solo_ste): birra, aperitivo amici, uscita amici, serata
+MATRIMONIO (matrimonio, condivisa): fedi, fiori, catering, bomboniere, abito
+LAVORI CASA (lavori_casa, condivisa): lavori, ristrutturazione, idraulico, elettricista
+BENEFICENZA (beneficenza): donazione
+MULTE (multe): multa
+LAVORO (lavoro, sempre solo_ste):
+- dominio, hosting, elementor → sub corrispondente
+- chatgpt, openai → sub: "Chat GPT"
+- adobe → sub: "Adobe Mensile"
+- commercialista → sub: "Commercialista"
+- canva → sub: "Canva"
+- trasferta, viaggio lavoro → sub: "Trasferta"
+
+TONO: conferma breve e naturale in italiano. "✅ Supermercato €40 — condivisa". Non essere prolisso.
+
+IMPORTANTE — SUBCATEGORY: il campo "subcategory" nella risposta deve corrispondere ESATTAMENTE al nome della riga nel foglio Google. Usa i nomi indicati nella mappa sopra (es. "Spesa Alimentare + Casa", "Benzina", "Pizza asporto", "Colazione fuori"). Se non c'è un match chiaro, metti null.
+
+Rispondi SOLO con JSON valido, niente markdown, niente backtick.`;
+
+/* ─── STYLES ─── */
+const S = {
+  app: { fontFamily: "'DM Sans', sans-serif", background: "#0a1410", color: "#e8efe8", minHeight: "100vh", maxWidth: 460, margin: "0 auto", position: "relative" },
+  header: { padding: "16px 20px 12px", background: "linear-gradient(135deg, #0d1f16, #142a1e)", borderBottom: "1px solid #1a3528", display: "flex", alignItems: "center", justifyContent: "space-between" },
+  logo: { fontSize: 20, fontWeight: 700, letterSpacing: -0.5, color: "#2dd4a0" },
+  badge: { fontSize: 10, padding: "3px 8px", borderRadius: 20, background: "#1a3528", color: "#2dd4a0", fontWeight: 600 },
+  tabs: { display: "flex", background: "#0d1a14", borderBottom: "1px solid #1a3528" },
+  tab: (a) => ({ flex: 1, padding: "11px 0", textAlign: "center", fontSize: 13, fontWeight: 600, cursor: "pointer", color: a ? "#2dd4a0" : "#5a7a6a", background: "none", border: "none", borderBottom: `2px solid ${a ? "#2dd4a0" : "transparent"}`, transition: "all .2s" }),
+  chat: { overflowY: "auto", padding: "16px 16px 130px", display: "flex", flexDirection: "column", gap: 10 },
+  msgBot: { alignSelf: "flex-start", background: "#132820", borderRadius: "16px 16px 16px 4px", padding: "12px 16px", maxWidth: "85%", fontSize: 14, lineHeight: 1.5, color: "#c8e0d0", whiteSpace: "pre-wrap" },
+  msgUser: { alignSelf: "flex-end", background: "#1a5c3a", borderRadius: "16px 16px 4px 16px", padding: "12px 16px", maxWidth: "85%", fontSize: 14, lineHeight: 1.5, color: "#e8f5e8" },
+  expCard: { background: "#0f2018", border: "1px solid #1a3528", borderRadius: 14, padding: "12px 16px", marginTop: 6, maxWidth: "85%" },
+  inputArea: { position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 460, padding: "12px 16px 28px", background: "linear-gradient(transparent, #0a1410 25%)", display: "flex", gap: 10, alignItems: "center" },
+  textInput: { flex: 1, background: "#132820", border: "1px solid #1a3528", borderRadius: 24, padding: "12px 18px", color: "#e8efe8", fontSize: 14, outline: "none" },
+  sendBtn: { width: 42, height: 42, borderRadius: "50%", background: "#2dd4a0", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 },
+  wizBox: { background: "#0f2018", border: "1px solid #1a3528", borderRadius: 16, padding: 20, margin: "12px 16px" },
+  btn: (p) => ({ width: "100%", padding: "14px", borderRadius: 12, border: "none", fontWeight: 600, fontSize: 14, cursor: "pointer", background: p ? "#2dd4a0" : "#1a3528", color: p ? "#0a1410" : "#8ab8a0", marginTop: 10 }),
+};
+
+const ArrowIcon = () => <svg width="18" height="18" fill="none" viewBox="0 0 24 24"><path d="M2 21l21-9L2 3v7l15 2-15 2v7z" fill="#0a1410"/></svg>;
+const MicIcon = ({on}) => <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" fill={on?"#e74c3c":"#8ab8a0"}/><path d="M19 10v2a7 7 0 0 1-14 0v-2" stroke={on?"#e74c3c":"#8ab8a0"} strokeWidth="2" strokeLinecap="round"/><path d="M12 19v4m-4 0h8" stroke={on?"#e74c3c":"#8ab8a0"} strokeWidth="2" strokeLinecap="round"/></svg>;
+
+/* ═══════════════════════════ MAIN APP ═══════════════════════════ */
+function AIPaghetta() {
+  const [tab, setTab] = useState("chat");
+  const [msgs, setMsgs] = useState([]);
+  const [expenses, setExpenses] = useState([]);
+  const [input, setInput] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [sheetUrl, setSheetUrl] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const [wizStep, setWizStep] = useState(0);
+  const [ready, setReady] = useState(false);
+  const [sync, setSync] = useState("idle");
+  const [pending, setPending] = useState(null);
+  const [urlInput, setUrlInput] = useState("");
+  const [apiKeyInput, setApiKeyInput] = useState("");
+  const [copied, setCopied] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const chatEnd = useRef(null);
+  const recognitionRef = useRef(null);
+
+  // Category management
+  const [newCatName, setNewCatName] = useState("");
+  const [newCatType, setNewCatType] = useState("semplice");
+  const [newCatSubs, setNewCatSubs] = useState("");
+  const [newCatEmpty, setNewCatEmpty] = useState(3);
+  const [catCreated, setCatCreated] = useState(null);
+
+  // Track synced expenses & deleting
+  const [syncedIds, setSyncedIds] = useState(new Set());
+  const [deletingId, setDeletingId] = useState(null);
+
+  /* ── Init: load from localStorage ── */
+  useEffect(() => {
+    const savedUrl = LS.get("aipaghetta-url");
+    const savedKey = LS.get("aipaghetta-apikey");
+    const savedData = LS.get("aipaghetta-data");
+    const savedSynced = LS.get("aipaghetta-synced");
+
+    if (savedUrl) setSheetUrl(savedUrl);
+    if (savedKey) setApiKey(savedKey);
+    if (savedData) try { setExpenses(JSON.parse(savedData)); } catch {}
+    if (savedSynced) try { setSyncedIds(new Set(JSON.parse(savedSynced))); } catch {}
+
+    if (savedKey) setReady(true);
+
+    setMsgs([{ from: "bot", text: "Ciao Ste! 👋 Dimmi cosa hai speso e lo registro nel tuo foglio.\n\n• \"40€ supermercato\"\n• \"Pizza 35€ con Martina\"\n• \"Pranzo da solo 12€\"\n• \"Adobe 52€\" (lavoro)\n• \"Quanto ho speso questo mese?\"" }]);
+  }, []);
+
+  /* ── Persist expenses ── */
+  useEffect(() => {
+    if (expenses.length) LS.set("aipaghetta-data", JSON.stringify(expenses));
+  }, [expenses]);
+
+  /* ── Persist syncedIds ── */
+  useEffect(() => {
+    if (syncedIds.size > 0) LS.set("aipaghetta-synced", JSON.stringify([...syncedIds]));
+  }, [syncedIds]);
+
+  useEffect(() => { chatEnd.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs]);
+
+  /* ── Voice Input ── */
+  const toggleVoice = () => {
+    if (isListening) {
+      recognitionRef.current?.stop();
+      setIsListening(false);
+      return;
+    }
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { setMsgs(p => [...p, { from: "bot", text: "⚠️ Il tuo browser non supporta l'input vocale. Prova Chrome." }]); return; }
+    const rec = new SR();
+    rec.lang = "it-IT";
+    rec.continuous = false;
+    rec.interimResults = true;
+    recognitionRef.current = rec;
+    rec.onstart = () => setIsListening(true);
+    rec.onresult = (e) => {
+      const transcript = Array.from(e.results).map(r => r[0].transcript).join("");
+      setInput(transcript);
+      if (e.results[0]?.isFinal) setIsListening(false);
+    };
+    rec.onerror = (e) => {
+      setIsListening(false);
+      if (e.error === "not-allowed") setMsgs(p => [...p, { from: "bot", text: "⚠️ Permesso microfono negato. Abilita il microfono nelle impostazioni del browser." }]);
+    };
+    rec.onend = () => setIsListening(false);
+    rec.start();
+  };
+
+  const fmtDate = () => { const d = new Date(); return `${String(d.getDate()).padStart(2,"0")}/${String(d.getMonth()+1).padStart(2,"0")}/${d.getFullYear()}`; };
+  const fmtTime = () => { const d = new Date(); return `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`; };
+
+  /* ── Google Sheets sync ── */
+  const buildSyncUrl = useCallback((exp, action = "add") => {
+    if (!sheetUrl) return null;
+    const params = action === "add"
+      ? `action=add&id=${exp.id}&date=${encodeURIComponent(exp.date)}&time=${encodeURIComponent(exp.time)}&description=${encodeURIComponent(exp.description)}&category=${exp.category}&subcategory=${encodeURIComponent(exp.subcategory || "")}&amount=${exp.amount}&tipo=${exp.tipo}&payment=${exp.payment || "carta"}`
+      : `action=delete&id=${exp.id}&date=${encodeURIComponent(exp.date)}&category=${exp.category}&subcategory=${encodeURIComponent(exp.subcategory || "")}&amount=${exp.amount}&tipo=${exp.tipo}&description=${encodeURIComponent(exp.description)}`;
+    return `${sheetUrl}?${params}&_t=${Date.now()}`;
+  }, [sheetUrl]);
+
+  const markSynced = (id) => {
+    setSyncedIds(p => { const n = new Set(p); n.add(id); return n; });
+    setSync("ok");
+    setTimeout(() => setSync("idle"), 2000);
+  };
+
+  const buildCatUrl = () => {
+    if (!sheetUrl || !newCatName.trim()) return null;
+    const subs = newCatSubs.split("\n").map(s => s.trim()).filter(Boolean).join("|");
+    return `${sheetUrl}?action=add_category&name=${encodeURIComponent(newCatName.trim())}&tipo=${newCatType}&subs=${encodeURIComponent(subs)}&empty=${newCatEmpty}&anno=26&_t=${Date.now()}`;
+  };
+
+  /* ── Claude AI ── */
+  const askClaude = async (text) => {
+    if (!apiKey) return { type: "query", message: "⚠️ API Key mancante. Vai in ⚙️ Impostazioni per inserirla." };
+    const recent = expenses.slice(-15).map(e => `${e.date} ${e.description} €${e.amount} ${CATEGORIES[e.category]?.label||""} ${e.tipo}`).join("\n");
+    const ctx = recent ? `\nUltime spese:\n${recent}` : "";
+    const pCtx = pending ? `\nSPESA IN SOSPESO (completare con tipo): ${JSON.stringify(pending)}` : "";
+    try {
+      const r = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+          "anthropic-dangerous-direct-browser-access": "true"
+        },
+        body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 1000, system: SYSTEM_PROMPT + ctx + pCtx, messages: [{ role: "user", content: text }] })
+      });
+      const d = await r.json();
+      if (d.error) return { type: "query", message: `⚠️ Errore API: ${d.error.message}` };
+      const raw = (d.content || []).map(b => b.text || "").join("");
+      return JSON.parse(raw.replace(/```json|```/g, "").trim());
+    } catch(err) { return { type: "query", message: "Non sono riuscito a elaborare. Riprova! 🤔" }; }
+  };
+
+  /* ── Send message ── */
+  const send = async () => {
+    const t = input.trim();
+    if (!t || busy) return;
+    setInput(""); setBusy(true);
+    setMsgs(p => [...p, { from: "user", text: t }]);
+    const res = await askClaude(t);
+
+    if (res.type === "expense" && res.data && !res.needsInfo) {
+      const cat = res.data.category || "altro_shopping";
+      const tipo = CATEGORIES[cat]?.alwaysPersonal ? "solo_ste" : (res.data.tipo || "condivisa");
+
+      // ── SPESA RICORRENTE ──
+      if (res.recurring && res.totalAmount) {
+        const total = Math.abs(res.totalAmount);
+        const now = new Date();
+        const curMonth = now.getMonth() + 1;
+        const curYear = now.getFullYear();
+        const monthlyBase = Math.floor(total / 12 * 100) / 100;
+        const monthsRemaining = 13 - curMonth;
+        const regularMonths = monthsRemaining - 1;
+        const decAmount = +(total - monthlyBase * regularMonths).toFixed(2);
+        const mesiNomi = ["","GEN","FEB","MAR","APR","MAG","GIU","LUG","AGO","SET","OTT","NOV","DIC"];
+
+        const newExps = [];
+        for (let m = curMonth; m <= 12; m++) {
+          const amt = m === 12 ? decAmount : monthlyBase;
+          const date = m === curMonth ? fmtDate() : `01/${String(m).padStart(2,"0")}/${curYear}`;
+          newExps.push({
+            id: Date.now().toString(36) + Math.random().toString(36).substr(2, 4) + m,
+            date, time: fmtTime(),
+            description: res.data.description || t,
+            amount: amt, category: cat,
+            subcategory: res.data.subcategory || null,
+            tipo, payment: res.data.payment || "carta"
+          });
+        }
+        setExpenses(p => [...newExps.reverse(), ...p]);
+        setPending(null);
+        const c = CATEGORIES[cat];
+        const recap = newExps.map(e => {
+          const [,mm] = e.date.split("/");
+          return `${mesiNomi[parseInt(mm)]}: €${e.amount.toFixed(2)}`;
+        }).join("\n");
+        setMsgs(p => [...p, { from: "bot", text: `📅 ${res.data.description} — €${total.toFixed(2)}/anno diviso su ${monthsRemaining} mesi:\n\n${recap}\n\n${monthsRemaining < 12 ? `⚠️ ${12 - monthsRemaining} mese/i precedenti recuperati su Dicembre` : ""}`, recurringExps: newExps.map(e => ({
+          icon: c?.icon || "📦", label: c?.label || cat, color: c?.color || "#2dd4a0",
+          desc: e.description, amount: e.amount, tipo: e.tipo, expId: e.id, exp: e,
+          month: e.date.split("/")[1]
+        })) }]);
+      } else {
+        // ── SPESA SINGOLA ──
+        const exp = {
+          id: Date.now().toString(36) + Math.random().toString(36).substr(2, 4),
+          date: fmtDate(), time: fmtTime(),
+          description: res.data.description || t,
+          amount: Math.abs(res.data.amount || 0),
+          category: cat, subcategory: res.data.subcategory || null,
+          tipo, payment: res.data.payment || "carta"
+        };
+        setExpenses(p => [exp, ...p]);
+        setPending(null);
+        const c = CATEGORIES[cat];
+        const smcNote = exp.tipo === "condivisa" ? ` → SMC: €${(exp.amount * 2).toFixed(2)}` : "";
+        setMsgs(p => [...p, { from: "bot", text: res.message || "✅ Registrato!", card: {
+          icon: c?.icon || "📦", label: c?.label || cat, color: c?.color || "#2dd4a0",
+          desc: exp.description, amount: exp.amount, tipo: exp.tipo, smcNote, expId: exp.id, exp
+        }}]);
+      }
+    } else if (res.type === "expense" && res.needsInfo) {
+      setPending(res.data);
+      setMsgs(p => [...p, { from: "bot", text: res.message }]);
+    } else {
+      setPending(null);
+      setMsgs(p => [...p, { from: "bot", text: res.message || "🤔" }]);
+    }
+    setBusy(false);
+  };
+
+  const delExpense = (exp) => {
+    if (!syncedIds.has(exp.id)) { setExpenses(p => p.filter(x => x.id !== exp.id)); return; }
+    setDeletingId(exp.id);
+  };
+  const confirmDelete = (exp) => {
+    setSyncedIds(p => { const n = new Set(p); n.delete(exp.id); return n; });
+    setExpenses(p => p.filter(x => x.id !== exp.id));
+    setDeletingId(null);
+  };
+
+  /* ── Analytics ── */
+  const analytics = () => {
+    const now = new Date(), cm = now.getMonth() + 1, cy = now.getFullYear();
+    const thisM = expenses.filter(e => { const [, m, y] = e.date.split("/").map(Number); return m === cm && y === cy; });
+    const lm = cm === 1 ? 12 : cm - 1, ly = cm === 1 ? cy - 1 : cy;
+    const lastM = expenses.filter(e => { const [, m, y] = e.date.split("/").map(Number); return m === lm && y === ly; });
+    const totSte = thisM.reduce((s, e) => s + e.amount, 0);
+    const totSmc = thisM.reduce((s, e) => s + (e.tipo === "condivisa" ? e.amount * 2 : 0), 0);
+    const lastTot = lastM.reduce((s, e) => s + e.amount, 0);
+    const chg = lastTot > 0 ? ((totSte - lastTot) / lastTot * 100).toFixed(0) : null;
+    const shared = thisM.filter(e => e.tipo === "condivisa").reduce((s, e) => s + e.amount, 0);
+    const personal = thisM.filter(e => e.tipo === "solo_ste").reduce((s, e) => s + e.amount, 0);
+    const byCat = {};
+    thisM.forEach(e => { byCat[e.category] = (byCat[e.category] || 0) + e.amount; });
+    const sorted = Object.entries(byCat).sort((a, b) => b[1] - a[1]);
+    const maxVal = sorted[0]?.[1] || 1;
+    return { totSte, totSmc, chg, shared, personal, sorted, maxVal, count: thisM.length };
+  };
+
+  /* ═══════ RENDER ═══════ */
+
+  /* ── Setup Wizard ── */
+  if (!ready) return (
+    <div style={S.app}>
+      <div style={S.header}><span style={S.logo}>💰 AI Paghetta</span><span style={S.badge}>PWA</span></div>
+      <div style={{ padding: 16, overflowY: "auto" }}>
+        <div style={{ textAlign: "center", padding: "28px 0 18px" }}>
+          <div style={{ fontSize: 48 }}>💰</div>
+          <h2 style={{ color: "#2dd4a0", fontSize: 22, margin: "10px 0 4px", fontWeight: 700 }}>Setup AI Paghetta</h2>
+          <p style={{ color: "#6a9a80", fontSize: 13 }}>Configura in 2 passi</p>
+          <div style={{ display: "flex", justifyContent: "center", gap: 8, marginTop: 14 }}>
+            {[0,1].map(i => <div key={i} style={{ width: 60, height: 4, borderRadius: 2, background: i <= wizStep ? "#2dd4a0" : "#1a3528" }}/>)}
+          </div>
+        </div>
+
+        {wizStep === 0 && <div style={S.wizBox}>
+          <h3 style={{ color: "#2dd4a0", fontSize: 15, marginBottom: 10 }}>1. API Key Claude</h3>
+          <p style={{ color: "#8ab8a0", fontSize: 13, lineHeight: 1.7, marginBottom: 12 }}>
+            Per funzionare, AI Paghetta ha bisogno di una chiave API Anthropic.<br/>
+            Vai su <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener" style={{ color: "#2dd4a0" }}>console.anthropic.com</a> → crea una chiave → copiala qui.
+          </p>
+          <input type="password" placeholder="sk-ant-api03-..."
+            value={apiKeyInput} onChange={e => setApiKeyInput(e.target.value)}
+            style={{ ...S.textInput, width: "100%", marginBottom: 10, boxSizing: "border-box" }} />
+          <button style={S.btn(true)} onClick={() => {
+            if (!apiKeyInput.startsWith("sk-")) return;
+            setApiKey(apiKeyInput);
+            LS.set("aipaghetta-apikey", apiKeyInput);
+            setWizStep(1);
+          }}>Avanti →</button>
+          <p style={{ color: "#5a7a6a", fontSize: 10, marginTop: 8, textAlign: "center" }}>🔒 La chiave resta SOLO sul tuo dispositivo (localStorage)</p>
+        </div>}
+
+        {wizStep === 1 && <div style={S.wizBox}>
+          <h3 style={{ color: "#2dd4a0", fontSize: 15, marginBottom: 10 }}>2. Google Sheets (opzionale)</h3>
+          <p style={{ color: "#8ab8a0", fontSize: 13, lineHeight: 1.7, marginBottom: 12 }}>
+            Se hai già l'URL del deployment Apps Script, incollalo qui. Altrimenti puoi configurarlo dopo nelle impostazioni.
+          </p>
+          <input type="text" placeholder="https://script.google.com/macros/s/..."
+            value={urlInput} onChange={e => setUrlInput(e.target.value)}
+            style={{ ...S.textInput, width: "100%", marginBottom: 10, boxSizing: "border-box" }} />
+          <button style={S.btn(true)} onClick={() => {
+            if (urlInput.includes("script.google.com")) {
+              setSheetUrl(urlInput);
+              LS.set("aipaghetta-url", urlInput);
+            }
+            setReady(true);
+          }}>✓ {urlInput.includes("script.google.com") ? "Connetti e Inizia" : "Inizia senza Sheets"}</button>
+        </div>}
+      </div>
+    </div>
+  );
+
+  const a = analytics();
+
+  return (
+    <div style={{ ...S.app, display: "flex", flexDirection: "column", height: "100vh" }}>
+      <div style={S.header}>
+        <span style={S.logo}>💰 AI Paghetta</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {sync === "ok" && <span style={{ fontSize: 10, color: "#2dd4a0" }}>✓</span>}
+          {sync === "err" && <span style={{ fontSize: 10, color: "#e74c3c" }}>✗</span>}
+          <span style={{...S.badge, cursor: "pointer"}} onClick={() => setTab("settings")}>{sheetUrl ? "SHEETS ✓" : "⚙️"}</span>
+        </div>
+      </div>
+
+      <div style={S.tabs}>
+        {[["chat","💬 Chat"],["spese","📋 Spese"],["stats","📊 Stats"],["settings","⚙️"]].map(([k,l]) =>
+          <button key={k} style={S.tab(tab===k)} onClick={() => setTab(k)}>{l}</button>
+        )}
+      </div>
+
+      {/* ── CHAT ── */}
+      {tab === "chat" && <>
+        <div style={S.chat}>
+          {msgs.map((m, i) => <div key={i} style={{ animation: "fadeUp .3s ease" }}>
+            <div style={m.from === "bot" ? S.msgBot : S.msgUser}>{m.text}</div>
+            {m.card && <div style={S.expCard}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontSize: 22 }}>{m.card.icon}</span>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 600 }}>{m.card.desc}</div>
+                    <div style={{ fontSize: 11, color: "#6a9a80" }}>{m.card.label}</div>
+                  </div>
+                </div>
+                <div style={{ textAlign: "right" }}>
+                  <div style={{ fontSize: 17, fontWeight: 700, color: m.card.color }}>€{m.card.amount.toFixed(2)}</div>
+                  <div style={{ fontSize: 10, color: m.card.tipo === "condivisa" ? "#2dd4a0" : "#f59e0b" }}>
+                    {m.card.tipo === "condivisa" ? "👫 Condivisa" : "👤 Solo Ste"}{m.card.smcNote}
+                  </div>
+                </div>
+              </div>
+              {sheetUrl && m.card.exp && !syncedIds.has(m.card.expId) && <a
+                href={buildSyncUrl(m.card.exp)} target="_blank" rel="noopener noreferrer"
+                onClick={() => markSynced(m.card.expId)}
+                style={{ display: "block", background: "#1a4530", borderRadius: 8, padding: "8px 12px", marginTop: 8, textAlign: "center", fontSize: 12, fontWeight: 600, color: "#2dd4a0", textDecoration: "none", border: "1px solid #2dd4a0" }}>
+                📤 Salva su Google Sheets
+              </a>}
+              {syncedIds.has(m.card.expId) && <div style={{ textAlign: "center", marginTop: 6, fontSize: 11, color: "#2dd4a0" }}>✅ Sincronizzato</div>}
+            </div>}
+            {m.recurringExps && <div style={{ ...S.expCard, maxWidth: "90%" }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: "#8ab8a0", marginBottom: 8 }}>📅 Spese mensili create:</div>
+              {m.recurringExps.map((re, ri) => {
+                const mesiNomi = ["","GEN","FEB","MAR","APR","MAG","GIU","LUG","AGO","SET","OTT","NOV","DIC"];
+                const mName = mesiNomi[parseInt(re.month)] || re.month;
+                return (
+                <div key={ri} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 0", borderBottom: ri < m.recurringExps.length - 1 ? "1px solid #1a3528" : "none" }}>
+                  <span style={{ fontSize: 12, color: "#c8e0d0" }}>{mName}</span>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: re.color }}>€{re.amount.toFixed(2)}</span>
+                    {sheetUrl && !syncedIds.has(re.expId) && <a
+                      href={buildSyncUrl(re.exp)} target="_blank" rel="noopener noreferrer"
+                      onClick={() => markSynced(re.expId)}
+                      style={{ fontSize: 10, color: "#2dd4a0", textDecoration: "none", background: "#1a4530", borderRadius: 4, padding: "2px 6px" }}>📤</a>}
+                    {syncedIds.has(re.expId) && <span style={{ fontSize: 10, color: "#2dd4a0" }}>✅</span>}
+                  </div>
+                </div>
+              );})}
+              {sheetUrl && m.recurringExps.some(r => !syncedIds.has(r.expId)) && <div style={{ marginTop: 8 }}>
+                <button onClick={() => {
+                  m.recurringExps.filter(r => !syncedIds.has(r.expId)).forEach((re, idx) => {
+                    setTimeout(() => {
+                      const url = buildSyncUrl(re.exp);
+                      if (url) { const a = document.createElement("a"); a.href = url; a.target = "_blank"; a.rel = "noopener"; document.body.appendChild(a); a.click(); document.body.removeChild(a); }
+                      markSynced(re.expId);
+                    }, idx * 800);
+                  });
+                }} style={{ width: "100%", background: "#1a4530", borderRadius: 8, padding: "8px 12px", textAlign: "center", fontSize: 12, fontWeight: 600, color: "#2dd4a0", border: "1px solid #2dd4a0", cursor: "pointer" }}>
+                  📤 Sincronizza tutti i {m.recurringExps.filter(r => !syncedIds.has(r.expId)).length} mesi
+                </button>
+              </div>}
+              {m.recurringExps.every(r => syncedIds.has(r.expId)) && <div style={{ textAlign: "center", marginTop: 6, fontSize: 11, color: "#2dd4a0" }}>✅ Tutti sincronizzati</div>}
+            </div>}
+          </div>)}
+          {busy && <div style={S.msgBot}><span style={{ animation: "pulse 1s infinite" }}>Elaboro... 🤔</span></div>}
+          <div ref={chatEnd} />
+        </div>
+        <div style={S.inputArea}>
+          <input style={{ ...S.textInput, borderColor: isListening ? "#e74c3c" : "#1a3528" }} value={input} onChange={e => setInput(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && send()} placeholder={isListening ? "🎤 Sto ascoltando..." : "Es: 40€ supermercato..."} />
+          <button onClick={toggleVoice}
+            style={{ ...S.sendBtn, background: isListening ? "#e74c3c" : "#1a3528", animation: isListening ? "pulse 1s infinite" : "none" }}>
+            <MicIcon on={isListening} />
+          </button>
+          <button style={S.sendBtn} onClick={send}><ArrowIcon /></button>
+        </div>
+      </>}
+
+      {/* ── SPESE LIST ── */}
+      {tab === "spese" && <div style={{ overflowY: "auto", padding: "12px 16px", flex: 1 }}>
+        <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
+          <div style={{ flex: 1, background: "#132820", borderRadius: 12, padding: "10px 14px", textAlign: "center" }}>
+            <div style={{ fontSize: 10, color: "#6a9a80" }}>Ste Totale</div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: "#2dd4a0" }}>€{expenses.reduce((s,e) => s + e.amount, 0).toFixed(2)}</div>
+          </div>
+          <div style={{ flex: 1, background: "#132820", borderRadius: 12, padding: "10px 14px", textAlign: "center" }}>
+            <div style={{ fontSize: 10, color: "#6a9a80" }}>SMC Coppia</div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: "#45B7D1" }}>€{expenses.reduce((s,e) => s + (e.tipo === "condivisa" ? e.amount * 2 : 0), 0).toFixed(2)}</div>
+          </div>
+        </div>
+
+        {expenses.length === 0 && <div style={{ textAlign: "center", padding: 40, color: "#5a7a6a" }}>
+          <div style={{ fontSize: 40, marginBottom: 10 }}>📭</div>
+          <div style={{ fontSize: 14 }}>Nessuna spesa</div>
+        </div>}
+
+        {expenses.map(e => { const c = CATEGORIES[e.category]; const isDeleting = deletingId === e.id; return (
+          <div key={e.id} style={{ ...S.expCard, marginBottom: 8, marginTop: 0, border: isDeleting ? "1px solid #e74c3c" : "1px solid #1a3528" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1 }}>
+                <span style={{ fontSize: 20 }}>{c?.icon || "📦"}</span>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>{e.description}</div>
+                  <div style={{ fontSize: 11, color: "#6a9a80" }}>
+                    {e.date} · {c?.label || e.category} · <span style={{ color: e.tipo === "condivisa" ? "#2dd4a0" : "#f59e0b" }}>{e.tipo === "condivisa" ? "👫" : "👤"}</span>
+                    {syncedIds.has(e.id) && <span style={{ color: "#2dd4a0", marginLeft: 4 }}>☁️</span>}
+                  </div>
+                </div>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <div style={{ textAlign: "right" }}>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: c?.color || "#2dd4a0" }}>€{e.amount.toFixed(2)}</div>
+                  {e.tipo === "condivisa" && <div style={{ fontSize: 9, color: "#5a7a6a" }}>SMC €{(e.amount*2).toFixed(2)}</div>}
+                </div>
+                <button onClick={() => isDeleting ? setDeletingId(null) : delExpense(e)}
+                  style={{ background: "none", border: "none", color: isDeleting ? "#e74c3c" : "#5a3a3a", cursor: "pointer", fontSize: 14, padding: 4 }}>
+                  {isDeleting ? "✖" : "✕"}
+                </button>
+              </div>
+            </div>
+            {isDeleting && <div style={{ marginTop: 8, padding: "8px 0 2px", borderTop: "1px solid #2a1a1a" }}>
+              <div style={{ fontSize: 11, color: "#e74c3c", marginBottom: 8 }}>Eliminare "{e.description}" €{e.amount.toFixed(2)}?</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                {sheetUrl && syncedIds.has(e.id) ? (
+                  <a href={buildSyncUrl(e, "delete")} target="_blank" rel="noopener noreferrer"
+                    onClick={() => confirmDelete(e)}
+                    style={{ flex: 1, display: "block", background: "#3a1515", borderRadius: 8, padding: "8px 12px", textAlign: "center",
+                      fontSize: 12, fontWeight: 600, color: "#e74c3c", textDecoration: "none", border: "1px solid #e74c3c" }}>
+                    🗑️ Elimina da Sheets + App
+                  </a>
+                ) : (
+                  <button onClick={() => { setExpenses(p => p.filter(x => x.id !== e.id)); setDeletingId(null); }}
+                    style={{ flex: 1, background: "#3a1515", borderRadius: 8, padding: "8px 12px", textAlign: "center",
+                      fontSize: 12, fontWeight: 600, color: "#e74c3c", border: "1px solid #e74c3c", cursor: "pointer" }}>
+                    🗑️ Elimina
+                  </button>
+                )}
+                <button onClick={() => setDeletingId(null)}
+                  style={{ background: "#1a3528", borderRadius: 8, padding: "8px 14px", fontSize: 12, fontWeight: 600, color: "#8ab8a0", border: "none", cursor: "pointer" }}>
+                  Annulla
+                </button>
+              </div>
+            </div>}
+          </div>
+        ); })}
+      </div>}
+
+      {/* ── ANALYTICS ── */}
+      {tab === "stats" && <div style={{ overflowY: "auto", padding: 16, flex: 1 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
+          <div style={{ background: "#132820", borderRadius: 14, padding: 14 }}>
+            <div style={{ fontSize: 10, color: "#6a9a80", marginBottom: 4 }}>STE questo mese</div>
+            <div style={{ fontSize: 22, fontWeight: 800, color: "#2dd4a0" }}>€{a.totSte.toFixed(0)}</div>
+            <div style={{ fontSize: 10, color: "#5a7a6a", marginTop: 3 }}>{a.count} movimenti</div>
+          </div>
+          <div style={{ background: "#132820", borderRadius: 14, padding: 14 }}>
+            <div style={{ fontSize: 10, color: "#6a9a80", marginBottom: 4 }}>SMC coppia</div>
+            <div style={{ fontSize: 22, fontWeight: 800, color: "#45B7D1" }}>€{a.totSmc.toFixed(0)}</div>
+            {a.chg !== null && <div style={{ fontSize: 10, color: Number(a.chg) > 0 ? "#e74c3c" : "#2dd4a0", marginTop: 3 }}>
+              {Number(a.chg) > 0 ? "↑" : "↓"} {Math.abs(a.chg)}% vs scorso
+            </div>}
+          </div>
+        </div>
+
+        <div style={{ background: "#132820", borderRadius: 14, padding: 14, marginBottom: 14 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: "#8ab8a0", marginBottom: 10 }}>Condivise vs Personali</div>
+          <div style={{ display: "flex", gap: 10 }}>
+            <div style={{ flex: 1, textAlign: "center" }}>
+              <div style={{ fontSize: 10, color: "#6a9a80" }}>👫 Condivise</div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: "#2dd4a0" }}>€{a.shared.toFixed(0)}</div>
+            </div>
+            <div style={{ width: 1, background: "#1a3528" }} />
+            <div style={{ flex: 1, textAlign: "center" }}>
+              <div style={{ fontSize: 10, color: "#6a9a80" }}>👤 Solo Ste</div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: "#f59e0b" }}>€{a.personal.toFixed(0)}</div>
+            </div>
+          </div>
+          {a.totSte > 0 && <div style={{ display: "flex", height: 6, borderRadius: 3, overflow: "hidden", background: "#0a1410", marginTop: 10 }}>
+            <div style={{ width: `${(a.shared/a.totSte)*100}%`, background: "#2dd4a0", borderRadius: 3 }} />
+            <div style={{ width: `${(a.personal/a.totSte)*100}%`, background: "#f59e0b", borderRadius: 3 }} />
+          </div>}
+        </div>
+
+        <div style={{ background: "#132820", borderRadius: 14, padding: 14 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: "#8ab8a0", marginBottom: 12 }}>Per categoria</div>
+          {a.sorted.map(([k, v]) => { const c = CATEGORIES[k]; const pct = a.totSte > 0 ? (v/a.totSte*100).toFixed(0) : 0; return (
+            <div key={k} style={{ marginBottom: 10 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 3 }}>
+                <span style={{ fontSize: 12, color: "#c8e0d0" }}>{c?.icon} {c?.label || k}</span>
+                <span style={{ fontSize: 13, fontWeight: 700, color: c?.color || "#2dd4a0" }}>€{v.toFixed(0)} <span style={{ fontSize: 9, color: "#6a9a80", fontWeight: 400 }}>{pct}%</span></span>
+              </div>
+              <div style={{ height: 4, borderRadius: 2, background: "#0a1410" }}>
+                <div style={{ height: "100%", borderRadius: 2, background: c?.color || "#2dd4a0", width: `${(v/a.maxVal)*100}%`, transition: "width .4s" }} />
+              </div>
+            </div>
+          ); })}
+          {a.sorted.length === 0 && <div style={{ textAlign: "center", padding: 20, color: "#5a7a6a", fontSize: 13 }}>Nessun dato questo mese</div>}
+        </div>
+      </div>}
+
+      {/* ── SETTINGS ── */}
+      {tab === "settings" && <div style={{ overflowY: "auto", padding: 16, flex: 1 }}>
+
+        {/* API Key */}
+        <div style={{ background: "#132820", borderRadius: 14, padding: 16, marginBottom: 16 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: "#2dd4a0", marginBottom: 12 }}>🔑 API Key Claude</div>
+          <input type="password" placeholder="sk-ant-api03-..."
+            value={apiKeyInput || apiKey} onChange={e => setApiKeyInput(e.target.value)}
+            style={{ ...S.textInput, width: "100%", marginBottom: 10, boxSizing: "border-box", fontSize: 12 }} />
+          <button style={{ ...S.btn(true), width: "100%", marginTop: 0, padding: "10px" }} onClick={() => {
+            const key = apiKeyInput || apiKey;
+            if (!key.startsWith("sk-")) return;
+            setApiKey(key); setApiKeyInput("");
+            LS.set("aipaghetta-apikey", key);
+          }}>✓ Salva API Key</button>
+          {apiKey && <div style={{ fontSize: 11, color: "#2dd4a0", marginTop: 8 }}>✓ Chiave salvata: sk-...{apiKey.slice(-8)}</div>}
+          <p style={{ color: "#5a7a6a", fontSize: 10, marginTop: 6 }}>🔒 Salvata solo in localStorage sul tuo dispositivo</p>
+        </div>
+
+        {/* Google Sheets Connection */}
+        <div style={{ background: "#132820", borderRadius: 14, padding: 16, marginBottom: 16 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: "#2dd4a0", marginBottom: 12 }}>🔗 Connessione Google Sheets</div>
+          <input type="text" placeholder="https://script.google.com/macros/s/..."
+            value={urlInput || sheetUrl} onChange={e => setUrlInput(e.target.value)}
+            style={{ ...S.textInput, width: "100%", marginBottom: 10, boxSizing: "border-box", fontSize: 12 }} />
+          <button style={{ ...S.btn(true), width: "100%", marginTop: 0, padding: "10px" }} onClick={() => {
+            const url = urlInput || sheetUrl;
+            if (!url.includes("script.google.com")) return;
+            setSheetUrl(url); setUrlInput("");
+            LS.set("aipaghetta-url", url);
+          }}>✓ Salva URL</button>
+          {sheetUrl && <div style={{ fontSize: 11, color: "#2dd4a0", marginTop: 8 }}>✓ Connesso: ...{sheetUrl.slice(-25)}</div>}
+        </div>
+
+        {/* Category Manager */}
+        <div style={{ background: "#132820", borderRadius: 14, padding: 16, marginBottom: 16 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: "#2dd4a0", marginBottom: 4 }}>📂 Nuova Macro Categoria</div>
+          <div style={{ fontSize: 11, color: "#5a7a6a", marginBottom: 14 }}>Crea una categoria su tutti i 12 fogli mensili</div>
+          <div style={{ fontSize: 11, color: "#8ab8a0", marginBottom: 4, fontWeight: 600 }}>Nome categoria</div>
+          <input type="text" placeholder="Es. VIAGGI"
+            value={newCatName} onChange={e => setNewCatName(e.target.value.toUpperCase())}
+            style={{ ...S.textInput, width: "100%", marginBottom: 12, boxSizing: "border-box", fontSize: 13, fontWeight: 600 }} />
+          <div style={{ fontSize: 11, color: "#8ab8a0", marginBottom: 4, fontWeight: 600 }}>Tipo layout</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 12 }}>
+            {[["semplice","Semplice","B=C/2, scrivi in C"],["semplice_ste","Solo Ste","Scrivi in B, no SMC"],["griglia","Griglia","D=K/2, scrivi in K+"],["griglia_ste","Griglia Ste","Scrivi in D-J"]].map(([val, label, desc]) => (
+              <div key={val} onClick={() => setNewCatType(val)}
+                style={{ background: newCatType === val ? "#1a4530" : "#0a1410", border: `1px solid ${newCatType === val ? "#2dd4a0" : "#1a3528"}`, borderRadius: 8, padding: "8px 10px", cursor: "pointer" }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: newCatType === val ? "#2dd4a0" : "#8ab8a0" }}>{label}</div>
+                <div style={{ fontSize: 9, color: "#5a7a6a", marginTop: 2 }}>{desc}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ fontSize: 11, color: "#8ab8a0", marginBottom: 4, fontWeight: 600 }}>Sottocategorie (una per riga)</div>
+          <textarea placeholder={"Volo\nHotel\nTrasporti\nCibo viaggio"}
+            value={newCatSubs} onChange={e => setNewCatSubs(e.target.value)}
+            style={{ ...S.textInput, width: "100%", height: 100, resize: "vertical", boxSizing: "border-box", fontSize: 12, fontFamily: "inherit", lineHeight: 1.6 }} />
+          <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "12px 0" }}>
+            <div style={{ fontSize: 11, color: "#8ab8a0", fontWeight: 600 }}>Righe vuote extra:</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <button onClick={() => setNewCatEmpty(Math.max(0, newCatEmpty - 1))}
+                style={{ background: "#1a3528", border: "none", color: "#2dd4a0", borderRadius: 6, width: 28, height: 28, fontSize: 16, cursor: "pointer" }}>−</button>
+              <span style={{ fontSize: 14, fontWeight: 700, color: "#c8e0d0", minWidth: 20, textAlign: "center" }}>{newCatEmpty}</span>
+              <button onClick={() => setNewCatEmpty(newCatEmpty + 1)}
+                style={{ background: "#1a3528", border: "none", color: "#2dd4a0", borderRadius: 6, width: 28, height: 28, fontSize: 16, cursor: "pointer" }}>+</button>
+            </div>
+          </div>
+          {newCatName.trim() && <div style={{ background: "#0a1410", borderRadius: 8, padding: 10, marginBottom: 12, border: "1px solid #1a3528" }}>
+            <div style={{ fontSize: 10, color: "#5a7a6a", marginBottom: 6 }}>Anteprima struttura:</div>
+            <div style={{ fontSize: 11, color: "#8ab8a0", fontFamily: "monospace", lineHeight: 1.8 }}>
+              <div style={{ fontWeight: 700, color: "#2dd4a0" }}>{newCatName} | {newCatType.includes("ste") ? "Ste" : "Ste | SMC"}</div>
+              {newCatSubs.split("\n").filter(s => s.trim()).map((s, i) => <div key={i}>  {s.trim()} | € —{newCatType === "semplice" || newCatType === "griglia" ? " | € —" : ""}</div>)}
+              {Array.from({length: newCatEmpty}, (_, i) => <div key={"e"+i} style={{ color: "#3a5a4a" }}>  (vuota) | € —</div>)}
+              <div style={{ fontWeight: 700, color: "#2dd4a0" }}>TOTALE {newCatName} | € —</div>
+            </div>
+          </div>}
+          {sheetUrl && newCatName.trim() ? (
+            catCreated === newCatName.trim() ? (
+              <div style={{ textAlign: "center", padding: 12, color: "#2dd4a0", fontSize: 13, fontWeight: 600 }}>✅ "{catCreated}" creata su tutti i fogli!</div>
+            ) : (
+              <a href={buildCatUrl()} target="_blank" rel="noopener noreferrer"
+                onClick={() => { setCatCreated(newCatName.trim()); setTimeout(() => setCatCreated(null), 10000); }}
+                style={{ display: "block", background: "#1a4530", borderRadius: 10, padding: "12px 16px", textAlign: "center",
+                  fontSize: 13, fontWeight: 700, color: "#2dd4a0", textDecoration: "none", border: "1px solid #2dd4a0" }}>
+                🚀 Crea "{newCatName.trim()}" su tutti i 12 fogli
+              </a>
+            )
+          ) : (
+            <div style={{ textAlign: "center", padding: 10, color: "#5a7a6a", fontSize: 11 }}>
+              {!sheetUrl ? "⚠️ Connetti prima Google Sheets" : "Inserisci un nome per la categoria"}
+            </div>
+          )}
+        </div>
+
+        {/* Categories list */}
+        <div style={{ background: "#132820", borderRadius: 14, padding: 16, marginBottom: 16 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: "#2dd4a0", marginBottom: 12 }}>📋 Categorie attive</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+            {Object.entries(CATEGORIES).map(([k, v]) => (
+              <div key={k} style={{ background: "#0a1410", borderRadius: 8, padding: "6px 10px", display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ fontSize: 14 }}>{v.icon}</span>
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: "#c8e0d0" }}>{v.label}</div>
+                  <div style={{ fontSize: 9, color: "#5a7a6a" }}>{v.alwaysPersonal ? "solo_ste" : "condivisa"}{v.subs?.length ? ` · ${v.subs.length} sub` : ""}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Reset */}
+        <div style={{ background: "#132820", borderRadius: 14, padding: 16 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: "#e74c3c", marginBottom: 8 }}>⚠️ Reset</div>
+          <button onClick={() => {
+            if (confirm("Eliminare TUTTI i dati locali? (Le spese su Sheets restano)")) {
+              localStorage.clear();
+              location.reload();
+            }
+          }} style={{ ...S.btn(false), color: "#e74c3c", borderColor: "#e74c3c" }}>
+            🗑️ Cancella tutti i dati locali
+          </button>
+        </div>
+      </div>}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<AIPaghetta />);
+</script>
+</body>
+</html>
