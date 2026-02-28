@@ -360,7 +360,11 @@ function AIPaghetta() {
     rec.onresult = (e) => {
       const transcript = Array.from(e.results).map(r => r[0].transcript).join("");
       setInput(transcript);
-      if (e.results[0]?.isFinal) setIsListening(false);
+      if (e.results[0]?.isFinal) {
+        setIsListening(false);
+        // Auto-invio dopo 600ms (così vedi cosa ha capito)
+        setTimeout(() => send(transcript), 600);
+      }
     };
     rec.onerror = (e) => {
       setIsListening(false);
@@ -419,8 +423,8 @@ function AIPaghetta() {
   };
 
   /* ── Send message ── */
-  const send = async () => {
-    const t = input.trim();
+  const send = async (overrideText) => {
+    const t = (overrideText || input).trim();
     if (!t || busy) return;
     setInput(""); setBusy(true);
     setMsgs(p => [...p, { from: "user", text: t }]);
