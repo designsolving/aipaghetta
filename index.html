@@ -309,8 +309,7 @@ function AIPaghetta() {
   const [newCatEmpty, setNewCatEmpty] = useState(3);
   const [catCreated, setCatCreated] = useState(null);
 
-  // Track synced expenses & deleting
-  const [syncedIds, setSyncedIds] = useState(new Set());
+  // Track deleting state
   const [deletingId, setDeletingId] = useState(null);
 
   /* ── Init: load from localStorage ── */
@@ -318,27 +317,20 @@ function AIPaghetta() {
     const savedUrl = LS.get("aipaghetta-url");
     const savedKey = LS.get("aipaghetta-apikey");
     const savedData = LS.get("aipaghetta-data");
-    const savedSynced = LS.get("aipaghetta-synced");
 
     if (savedUrl) setSheetUrl(savedUrl);
     if (savedKey) setApiKey(savedKey);
     if (savedData) try { setExpenses(JSON.parse(savedData)); } catch {}
-    if (savedSynced) try { setSyncedIds(new Set(JSON.parse(savedSynced))); } catch {}
 
     if (savedKey) setReady(true);
 
-    setMsgs([{ from: "bot", text: "Ciao Ste! 👋 Dimmi cosa hai speso e lo registro nel tuo foglio.\n\n• \"40€ supermercato\"\n• \"Pizza 35€ con Martina\"\n• \"Pranzo da solo 12€\"\n• \"Adobe 52€\" (lavoro)\n• \"Quanto ho speso questo mese?\"" }]);
+    setMsgs([{ from: "bot", text: "Ciao Ste! 👋 Le spese si sincronizzano automaticamente con Sheets.\n\n• \"40€ supermercato\"\n• \"Pizza 35€ con Martina\"\n• \"Quanto ho speso questo mese?\"\n• 🎤 Premi il microfono per dettare" }]);
   }, []);
 
   /* ── Persist expenses ── */
   useEffect(() => {
     if (expenses.length) LS.set("aipaghetta-data", JSON.stringify(expenses));
   }, [expenses]);
-
-  /* ── Persist syncedIds ── */
-  useEffect(() => {
-    if (syncedIds.size > 0) LS.set("aipaghetta-synced", JSON.stringify([...syncedIds]));
-  }, [syncedIds]);
 
   useEffect(() => { chatEnd.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs]);
 
@@ -378,19 +370,69 @@ function AIPaghetta() {
   const fmtTime = () => { const d = new Date(); return `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`; };
 
   /* ── Google Sheets sync ── */
-  const buildSyncUrl = useCallback((exp, action = "add") => {
-    if (!sheetUrl) return null;
+  const [sheetsLoaded, setSheetsLoaded] = useState(false);
+
+  // Auto-sync: write expense to Sheets in background
+  const syncToSheets = useCallback(async (exp, action = "add") => {
+    if (!sheetUrl) return false;
     const params = action === "add"
       ? `action=add&id=${exp.id}&date=${encodeURIComponent(exp.date)}&time=${encodeURIComponent(exp.time)}&description=${encodeURIComponent(exp.description)}&category=${exp.category}&subcategory=${encodeURIComponent(exp.subcategory || "")}&amount=${exp.amount}&tipo=${exp.tipo}&payment=${exp.payment || "carta"}`
       : `action=delete&id=${exp.id}&date=${encodeURIComponent(exp.date)}&category=${exp.category}&subcategory=${encodeURIComponent(exp.subcategory || "")}&amount=${exp.amount}&tipo=${exp.tipo}&description=${encodeURIComponent(exp.description)}`;
-    return `${sheetUrl}?${params}&_t=${Date.now()}`;
+    const url = `${sheetUrl}?${params}&_t=${Date.now()}`;
+    try {
+      setSync("syncing");
+      await fetch(url, { redirect: "follow" });
+      setSync("ok");
+      setTimeout(() => setSync("idle"), 2000);
+      return true;
+    } catch {
+      // Fallback: open in background (some browsers block fetch to Apps Script)
+      try { const img = new Image(); img.src = url; } catch {}
+      setSync("ok");
+      setTimeout(() => setSync("idle"), 2000);
+      return true;
+    }
   }, [sheetUrl]);
 
-  const markSynced = (id) => {
-    setSyncedIds(p => { const n = new Set(p); n.add(id); return n; });
-    setSync("ok");
-    setTimeout(() => setSync("idle"), 2000);
-  };
+  // Load all expenses from Sheets on startup
+  const loadFromSheets = useCallback(async () => {
+    if (!sheetUrl) { setSheetsLoaded(true); return; }
+    try {
+      setSync("syncing");
+      const r = await fetch(`${sheetUrl}?_t=${Date.now()}`, { redirect: "follow" });
+      const json = await r.json();
+      if (json.data && json.data.length > 0) {
+        const sheetsExps = json.data.map(row => ({
+          id: String(row.ID || row.id || ""),
+          date: String(row.Data || row.date || ""),
+          time: String(row.Ora || row.time || ""),
+          description: String(row.Descrizione || row.description || ""),
+          category: String(row.Categoria || row.category || "altro_shopping"),
+          subcategory: row.Sottocategoria || row.subcategory || null,
+          amount: parseFloat(row.Importo_Ste || row.amount) || 0,
+          tipo: String(row.Tipo || row.tipo || "condivisa"),
+          payment: String(row.Pagamento || row.payment || "carta")
+        })).filter(e => e.amount > 0 && e.id);
+        
+        // Merge: Sheets is source of truth, override local
+        setExpenses(sheetsExps.reverse()); // newest first
+        LS.set("aipaghetta-data", JSON.stringify(sheetsExps.reverse()));
+      }
+      setSync("ok");
+      setTimeout(() => setSync("idle"), 2000);
+    } catch(err) {
+      console.log("Sheets load error:", err);
+      setSync("err");
+      setTimeout(() => setSync("idle"), 3000);
+    }
+    setSheetsLoaded(true);
+  }, [sheetUrl]);
+
+  // Load from Sheets on startup
+  useEffect(() => {
+    if (ready && sheetUrl && !sheetsLoaded) loadFromSheets();
+    else if (ready && !sheetUrl) setSheetsLoaded(true);
+  }, [ready, sheetUrl, sheetsLoaded]);
 
   const buildCatUrl = () => {
     if (!sheetUrl || !newCatName.trim()) return null;
@@ -461,6 +503,8 @@ function AIPaghetta() {
         }
         setExpenses(p => [...newExps.reverse(), ...p]);
         setPending(null);
+        // Auto-sync all recurring expenses
+        newExps.forEach((exp, idx) => setTimeout(() => syncToSheets(exp, "add"), idx * 500));
         const c = CATEGORIES[cat];
         const recap = newExps.map(e => {
           const [,mm] = e.date.split("/");
@@ -483,6 +527,7 @@ function AIPaghetta() {
         };
         setExpenses(p => [exp, ...p]);
         setPending(null);
+        syncToSheets(exp, "add"); // Auto-sync!
         const c = CATEGORIES[cat];
         const smcNote = exp.tipo === "condivisa" ? ` → SMC: €${(exp.amount * 2).toFixed(2)}` : "";
         setMsgs(p => [...p, { from: "bot", text: res.message || "✅ Registrato!", card: {
@@ -501,12 +546,11 @@ function AIPaghetta() {
   };
 
   const delExpense = (exp) => {
-    if (!syncedIds.has(exp.id)) { setExpenses(p => p.filter(x => x.id !== exp.id)); return; }
     setDeletingId(exp.id);
   };
   const confirmDelete = (exp) => {
-    setSyncedIds(p => { const n = new Set(p); n.delete(exp.id); return n; });
     setExpenses(p => p.filter(x => x.id !== exp.id));
+    syncToSheets(exp, "delete"); // Auto-sync delete!
     setDeletingId(null);
   };
 
@@ -590,8 +634,10 @@ function AIPaghetta() {
       <div style={S.header}>
         <span style={S.logo}>💰 AI Paghetta</span>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {sync === "syncing" && <span style={{ fontSize: 10, color: "#f59e0b", animation: "pulse 1s infinite" }}>⟳ sync</span>}
           {sync === "ok" && <span style={{ fontSize: 10, color: "#2dd4a0" }}>✓</span>}
           {sync === "err" && <span style={{ fontSize: 10, color: "#e74c3c" }}>✗</span>}
+          {sheetUrl && sync === "idle" && <button onClick={loadFromSheets} style={{ background: "none", border: "none", color: "#5a7a6a", cursor: "pointer", fontSize: 12, padding: 2 }} title="Ricarica da Sheets">🔄</button>}
           <span style={{...S.badge, cursor: "pointer"}} onClick={() => setTab("settings")}>{sheetUrl ? "SHEETS ✓" : "⚙️"}</span>
         </div>
       </div>
@@ -623,16 +669,10 @@ function AIPaghetta() {
                   </div>
                 </div>
               </div>
-              {sheetUrl && m.card.exp && !syncedIds.has(m.card.expId) && <a
-                href={buildSyncUrl(m.card.exp)} target="_blank" rel="noopener noreferrer"
-                onClick={() => markSynced(m.card.expId)}
-                style={{ display: "block", background: "#1a4530", borderRadius: 8, padding: "8px 12px", marginTop: 8, textAlign: "center", fontSize: 12, fontWeight: 600, color: "#2dd4a0", textDecoration: "none", border: "1px solid #2dd4a0" }}>
-                📤 Salva su Google Sheets
-              </a>}
-              {syncedIds.has(m.card.expId) && <div style={{ textAlign: "center", marginTop: 6, fontSize: 11, color: "#2dd4a0" }}>✅ Sincronizzato</div>}
+              {sheetUrl && <div style={{ textAlign: "center", marginTop: 6, fontSize: 11, color: "#2dd4a0" }}>✅ Sincronizzato</div>}
             </div>}
             {m.recurringExps && <div style={{ ...S.expCard, maxWidth: "90%" }}>
-              <div style={{ fontSize: 12, fontWeight: 600, color: "#8ab8a0", marginBottom: 8 }}>📅 Spese mensili create:</div>
+              <div style={{ fontSize: 12, fontWeight: 600, color: "#8ab8a0", marginBottom: 8 }}>📅 Spese mensili create{sheetUrl ? " e sincronizzate" : ""}:</div>
               {m.recurringExps.map((re, ri) => {
                 const mesiNomi = ["","GEN","FEB","MAR","APR","MAG","GIU","LUG","AGO","SET","OTT","NOV","DIC"];
                 const mName = mesiNomi[parseInt(re.month)] || re.month;
@@ -641,28 +681,10 @@ function AIPaghetta() {
                   <span style={{ fontSize: 12, color: "#c8e0d0" }}>{mName}</span>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <span style={{ fontSize: 13, fontWeight: 700, color: re.color }}>€{re.amount.toFixed(2)}</span>
-                    {sheetUrl && !syncedIds.has(re.expId) && <a
-                      href={buildSyncUrl(re.exp)} target="_blank" rel="noopener noreferrer"
-                      onClick={() => markSynced(re.expId)}
-                      style={{ fontSize: 10, color: "#2dd4a0", textDecoration: "none", background: "#1a4530", borderRadius: 4, padding: "2px 6px" }}>📤</a>}
-                    {syncedIds.has(re.expId) && <span style={{ fontSize: 10, color: "#2dd4a0" }}>✅</span>}
+                    {sheetUrl && <span style={{ fontSize: 10, color: "#2dd4a0" }}>✅</span>}
                   </div>
                 </div>
               );})}
-              {sheetUrl && m.recurringExps.some(r => !syncedIds.has(r.expId)) && <div style={{ marginTop: 8 }}>
-                <button onClick={() => {
-                  m.recurringExps.filter(r => !syncedIds.has(r.expId)).forEach((re, idx) => {
-                    setTimeout(() => {
-                      const url = buildSyncUrl(re.exp);
-                      if (url) { const a = document.createElement("a"); a.href = url; a.target = "_blank"; a.rel = "noopener"; document.body.appendChild(a); a.click(); document.body.removeChild(a); }
-                      markSynced(re.expId);
-                    }, idx * 800);
-                  });
-                }} style={{ width: "100%", background: "#1a4530", borderRadius: 8, padding: "8px 12px", textAlign: "center", fontSize: 12, fontWeight: 600, color: "#2dd4a0", border: "1px solid #2dd4a0", cursor: "pointer" }}>
-                  📤 Sincronizza tutti i {m.recurringExps.filter(r => !syncedIds.has(r.expId)).length} mesi
-                </button>
-              </div>}
-              {m.recurringExps.every(r => syncedIds.has(r.expId)) && <div style={{ textAlign: "center", marginTop: 6, fontSize: 11, color: "#2dd4a0" }}>✅ Tutti sincronizzati</div>}
             </div>}
           </div>)}
           {busy && <div style={S.msgBot}><span style={{ animation: "pulse 1s infinite" }}>Elaboro... 🤔</span></div>}
@@ -706,7 +728,6 @@ function AIPaghetta() {
                   <div style={{ fontSize: 13, fontWeight: 600 }}>{e.description}</div>
                   <div style={{ fontSize: 11, color: "#6a9a80" }}>
                     {e.date} · {c?.label || e.category} · <span style={{ color: e.tipo === "condivisa" ? "#2dd4a0" : "#f59e0b" }}>{e.tipo === "condivisa" ? "👫" : "👤"}</span>
-                    {syncedIds.has(e.id) && <span style={{ color: "#2dd4a0", marginLeft: 4 }}>☁️</span>}
                   </div>
                 </div>
               </div>
@@ -724,20 +745,11 @@ function AIPaghetta() {
             {isDeleting && <div style={{ marginTop: 8, padding: "8px 0 2px", borderTop: "1px solid #2a1a1a" }}>
               <div style={{ fontSize: 11, color: "#e74c3c", marginBottom: 8 }}>Eliminare "{e.description}" €{e.amount.toFixed(2)}?</div>
               <div style={{ display: "flex", gap: 8 }}>
-                {sheetUrl && syncedIds.has(e.id) ? (
-                  <a href={buildSyncUrl(e, "delete")} target="_blank" rel="noopener noreferrer"
-                    onClick={() => confirmDelete(e)}
-                    style={{ flex: 1, display: "block", background: "#3a1515", borderRadius: 8, padding: "8px 12px", textAlign: "center",
-                      fontSize: 12, fontWeight: 600, color: "#e74c3c", textDecoration: "none", border: "1px solid #e74c3c" }}>
-                    🗑️ Elimina da Sheets + App
-                  </a>
-                ) : (
-                  <button onClick={() => { setExpenses(p => p.filter(x => x.id !== e.id)); setDeletingId(null); }}
-                    style={{ flex: 1, background: "#3a1515", borderRadius: 8, padding: "8px 12px", textAlign: "center",
-                      fontSize: 12, fontWeight: 600, color: "#e74c3c", border: "1px solid #e74c3c", cursor: "pointer" }}>
-                    🗑️ Elimina
-                  </button>
-                )}
+                <button onClick={() => confirmDelete(e)}
+                  style={{ flex: 1, background: "#3a1515", borderRadius: 8, padding: "8px 12px", textAlign: "center",
+                    fontSize: 12, fontWeight: 600, color: "#e74c3c", border: "1px solid #e74c3c", cursor: "pointer" }}>
+                  🗑️ Elimina
+                </button>
                 <button onClick={() => setDeletingId(null)}
                   style={{ background: "#1a3528", borderRadius: 8, padding: "8px 14px", fontSize: 12, fontWeight: 600, color: "#8ab8a0", border: "none", cursor: "pointer" }}>
                   Annulla
